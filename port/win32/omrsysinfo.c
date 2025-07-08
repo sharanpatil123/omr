@@ -24,7 +24,6 @@
  * @ingroup Port
  * @brief System information
  */
-
 #include <pdh.h>
 #include <pdhmsg.h>
 #include <stdio.h>
@@ -2080,6 +2079,7 @@ omrsysinfo_get_number_context_switches(struct OMRPortLibrary *portLibrary, uint6
 uintptr_t
 omrsysinfo_get_processes(struct OMRPortLibrary *portLibrary, OMRProcessInfoCallback callback, void *userData)
 {
+	#if !defined(J9VM_OPT_USE_OMR_DDR) && !defined(J9DDR_GENERATE_VERSION)
 	//return OMRPORT_ERROR_NOT_SUPPORTED_ON_THIS_PLATFORM;
 	HRESULT hres;
     IWbemLocator *pLoc = NULL;
@@ -2108,10 +2108,10 @@ omrsysinfo_get_processes(struct OMRPortLibrary *portLibrary, OMRProcessInfoCallb
     }
 
     BSTR ns = SysAllocString(L"ROOT\\CIMV2");
-    hres = pLoc->ConnectServer(pLoc, ns, NULL, NULL, NULL, 0, NULL, NULL, &pSvc);
+    hres = pLoc->lpVtbl->ConnectServer(pLoc, ns, NULL, NULL, NULL, 0, NULL, NULL, &pSvc);
     SysFreeString(ns);
     if (FAILED(hres)) {
-        pLoc->Release(pLoc);
+        pLoc->lpVtbl->Release(pLoc);
         CoUninitialize();
         return 1;
     }
@@ -2121,22 +2121,22 @@ omrsysinfo_get_processes(struct OMRPortLibrary *portLibrary, OMRProcessInfoCallb
                              RPC_C_AUTHN_LEVEL_CALL, RPC_C_IMP_LEVEL_IMPERSONATE,
                              NULL, EOAC_NONE);
     if (FAILED(hres)) {
-        pSvc->Release(pSvc);
-        pLoc->Release(pLoc);
+        pSvc->lpVtbl->Release(pSvc);
+        pLoc->lpVtbl->Release(pLoc);
         CoUninitialize();
         return 1;
     }
 
     BSTR queryLang = SysAllocString(L"WQL");
     BSTR queryStr = SysAllocString(L"SELECT ProcessId, CommandLine, Name FROM Win32_Process");
-    hres = pSvc->ExecQuery(pSvc, queryLang, queryStr,
+    hres = pSvc->lpVtbl->ExecQuery(pSvc, queryLang, queryStr,
                                    WBEM_FLAG_FORWARD_ONLY | WBEM_FLAG_RETURN_IMMEDIATELY,
                                    NULL, &pEnumerator);
     SysFreeString(queryLang);
     SysFreeString(queryStr);
     if (FAILED(hres)) {
-        pSvc->Release(pSvc);
-        pLoc->Release(pLoc);
+        pSvc->lpVtbl->Release(pSvc);
+        pLoc->lpVtbl->Release(pLoc);
         CoUninitialize();
         return 1;
     }
@@ -2144,15 +2144,15 @@ omrsysinfo_get_processes(struct OMRPortLibrary *portLibrary, OMRProcessInfoCallb
     IWbemClassObject *pclsObj = NULL;
     ULONG uReturn = 0;
 
-    while (pEnumerator && SUCCEEDED(pEnumerator->Next(pEnumerator, WBEM_INFINITE, 1, &pclsObj, &uReturn)) && uReturn) {
+    while (pEnumerator && SUCCEEDED(pEnumerator->lpVtbl->Next(pEnumerator, WBEM_INFINITE, 1, &pclsObj, &uReturn)) && uReturn) {
         VARIANT vtPid, vtCmd, vtName;
         VariantInit(&vtPid);
         VariantInit(&vtCmd);
         VariantInit(&vtName);
 
-        pclsObj->Get(pclsObj, L"ProcessId", 0, &vtPid, 0, 0);
-        pclsObj->Get(pclsObj, L"CommandLine", 0, &vtCmd, 0, 0);
-        pclsObj->Get(pclsObj, L"Name", 0, &vtName, 0, 0);
+        pclsObj->lpVtbl->Get(pclsObj, L"ProcessId", 0, &vtPid, 0, 0);
+        pclsObj->lpVtbl->Get(pclsObj, L"CommandLine", 0, &vtCmd, 0, 0);
+        pclsObj->lpVtbl->Get(pclsObj, L"Name", 0, &vtName, 0, 0);
 
         if (vtPid.vt == VT_I4) {
             const wchar_t *src = NULL;
@@ -2174,7 +2174,7 @@ omrsysinfo_get_processes(struct OMRPortLibrary *portLibrary, OMRProcessInfoCallb
                         VariantClear(&vtPid);
                         VariantClear(&vtCmd);
                         VariantClear(&vtName);
-                        pclsObj->Release(pclsObj);
+                        pclsObj->lpVtbl->Release(pclsObj);
                         break;
                     }
                 }
@@ -2184,13 +2184,14 @@ omrsysinfo_get_processes(struct OMRPortLibrary *portLibrary, OMRProcessInfoCallb
         VariantClear(&vtPid);
         VariantClear(&vtCmd);
         VariantClear(&vtName);
-        pclsObj->Release(pclsObj);
+        pclsObj->lpVtbl->Release(pclsObj);
     }
 
     if (pEnumerator) pEnumerator->Release(pEnumerator);
-    if (pSvc) pSvc->Release(pSvc);
-    if (pLoc) pLoc->Release(pLoc);
+    if (pSvc) pSvc->lpVtbl->Release(pSvc);
+    if (pLoc) pLoc->lpVtbl->Release(pLoc);
     CoUninitialize();
 
     return callback_result;
+	#endif
 }
