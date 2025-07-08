@@ -24,6 +24,8 @@
  * @ingroup Port
  * @brief System information
  */
+#if !defined(J9VM_OPT_USE_OMR_DDR) && !defined(J9DDR_GENERATE_VERSION)
+
 #include <pdh.h>
 #include <pdhmsg.h>
 #include <stdio.h>
@@ -2079,7 +2081,7 @@ omrsysinfo_get_number_context_switches(struct OMRPortLibrary *portLibrary, uint6
 uintptr_t
 omrsysinfo_get_processes(struct OMRPortLibrary *portLibrary, OMRProcessInfoCallback callback, void *userData)
 {
-	#if !defined(J9VM_OPT_USE_OMR_DDR) && !defined(J9DDR_GENERATE_VERSION)
+	
 	//return OMRPORT_ERROR_NOT_SUPPORTED_ON_THIS_PLATFORM;
 	HRESULT hres;
     IWbemLocator *pLoc = NULL;
@@ -2193,5 +2195,6 @@ omrsysinfo_get_processes(struct OMRPortLibrary *portLibrary, OMRProcessInfoCallb
     CoUninitialize();
 
     return callback_result;
-	#endif
+	
 }
+#endif
