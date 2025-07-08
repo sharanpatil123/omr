@@ -2187,7 +2187,7 @@ omrsysinfo_get_processes(struct OMRPortLibrary *portLibrary, OMRProcessInfoCallb
         pclsObj->lpVtbl->Release(pclsObj);
     }
 
-    if (pEnumerator) pEnumerator->Release(pEnumerator);
+    if (pEnumerator) pEnumerator->lpVtbl->Release(pEnumerator);
     if (pSvc) pSvc->lpVtbl->Release(pSvc);
     if (pLoc) pLoc->lpVtbl->Release(pLoc);
     CoUninitialize();
