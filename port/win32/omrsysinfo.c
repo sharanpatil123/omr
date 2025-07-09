@@ -51,7 +51,6 @@
 #define CINTERFACE
 #include <Wbemidl.h>
 #include <combaseapi.h>
-#include <comdef.h">
 
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "oleaut32.lib")
