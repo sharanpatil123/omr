@@ -24,13 +24,13 @@
  * @ingroup Port
  * @brief System information
  */
-#if !defined(J9VM_OPT_USE_OMR_DDR) && !defined(J9DDR_GENERATE_VERSION)
+
 
 #include <pdh.h>
 #include <pdhmsg.h>
 #include <stdio.h>
 #include <windows.h>
-#include <Wbemidl.h>
+
 #include <WinSDKVer.h>
 /* Undefine the winsockapi because winsock2 defines it.  Removes warnings. */
 #if defined(_WINSOCKAPI_) && !defined(_WINSOCK2API_)
@@ -47,6 +47,11 @@
 #include "omrportptb.h"
 #include "ut_omrport.h"
 #include "omrsysinfo_helpers.h"
+
+#define CINTERFACE
+#include <Wbemidl.h>
+#include <combaseapi.h>
+#include <comdef.h">
 
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "oleaut32.lib")
@@ -2197,4 +2202,3 @@ omrsysinfo_get_processes(struct OMRPortLibrary *portLibrary, OMRProcessInfoCallb
     return callback_result;
 	
 }
-#endif
