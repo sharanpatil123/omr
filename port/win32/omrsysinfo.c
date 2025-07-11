@@ -29,6 +29,11 @@
 #include <pdhmsg.h>
 #include <stdio.h>
 #include <windows.h>
+#include <tlhelp32.h>
+#include <psapi.h>
+#include <wchar.h>
+#include <winternl.h>
+
 #include <WinSDKVer.h>
 /* Undefine the winsockapi because winsock2 defines it.  Removes warnings. */
 #if defined(_WINSOCKAPI_) && !defined(_WINSOCK2API_)
@@ -45,6 +50,13 @@
 #include "omrportptb.h"
 #include "ut_omrport.h"
 #include "omrsysinfo_helpers.h"
+
+#pragma comment(lib, "psapi.lib")
+
+static BOOL GetProcessCommandLineFromPEB(DWORD processID, WCHAR* cmdLine, DWORD cmdLineSize);
+static BOOL GetProcessFullPath(DWORD processID, WCHAR* fullPath, DWORD fullPathSize);
+static void ExtractExecutableName(const WCHAR* fullPath, WCHAR* exeName, DWORD exeNameSize);
+static char* utf16_to_utf8(OMRPortLibrary *portLibrary, const WCHAR *wstr);
 
 #define OMRPORT_SYSINFO_WINDOWS_TICK 10000000ULL
 #define OMRPORT_SYSINFO_SEC_TO_UNIX_EPOCH 11644473600ULL
@@ -2075,5 +2087,118 @@ omrsysinfo_get_number_context_switches(struct OMRPortLibrary *portLibrary, uint6
 uintptr_t
 omrsysinfo_get_processes(struct OMRPortLibrary *portLibrary, OMRProcessInfoCallback callback, void *userData)
 {
-	return OMRPORT_ERROR_NOT_SUPPORTED_ON_THIS_PLATFORM;
+	HANDLE hProcessSnap;
+	PROCESSENTRY32W pe32;
+	WCHAR fullPath[MAX_PATH * 2];
+	WCHAR cmdLine[MAX_PATH * 4];
+	WCHAR exeName[MAX_PATH];
+
+	hProcessSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+	if (hProcessSnap == INVALID_HANDLE_VALUE) {
+		return OMRPORT_ERROR_INTERNAL;
+	}
+
+	pe32.dwSize = sizeof(PROCESSENTRY32W);
+	if (!Process32FirstW(hProcessSnap, &pe32)) {
+		CloseHandle(hProcessSnap);
+		return OMRPORT_ERROR_INTERNAL;
+	}
+
+	do {
+		BOOL gotFullPath = GetProcessFullPath(pe32.th32ProcessID, fullPath, MAX_PATH * 2);
+		if (gotFullPath) {
+			ExtractExecutableName(fullPath, exeName, MAX_PATH);
+			BOOL gotCmdLine = GetProcessCommandLineFromPEB(pe32.th32ProcessID, cmdLine, MAX_PATH * 4);
+			WCHAR *toConvert = (gotCmdLine && wcslen(cmdLine) > 0) ? cmdLine : fullPath;
+			char *utf8 = utf16_to_utf8(portLibrary, toConvert);
+			if (utf8) {
+				callback(pe32.th32ProcessID, utf8, userData);
+				portLibrary->mem_free_memory(portLibrary, utf8);
+			}
+		} else {
+			char *utf8 = utf16_to_utf8(portLibrary, pe32.szExeFile);
+			if (utf8) {
+				callback(pe32.th32ProcessID, utf8, userData);
+				portLibrary->mem_free_memory(portLibrary, utf8);
+			}
+		}
+	} while (Process32NextW(hProcessSnap, &pe32));
+
+	CloseHandle(hProcessSnap);
+	return 0;
+}
+static BOOL GetProcessCommandLineFromPEB(DWORD processID, WCHAR* cmdLine, DWORD cmdLineSize)
+{
+	HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, processID);
+	if (!hProcess) return FALSE;
+
+	PROCESS_BASIC_INFORMATION pbi;
+	ULONG returnLength;
+	if (NtQueryInformationProcess(hProcess, ProcessBasicInformation, &pbi, sizeof(pbi), &returnLength)) {
+		CloseHandle(hProcess);
+		return FALSE;
+	}
+
+	PEB peb;
+	SIZE_T bytesRead;
+	if (!ReadProcessMemory(hProcess, pbi.PebBaseAddress, &peb, sizeof(peb), &bytesRead)) {
+		CloseHandle(hProcess);
+		return FALSE;
+	}
+
+	RTL_USER_PROCESS_PARAMETERS params;
+	if (!ReadProcessMemory(hProcess, peb.ProcessParameters, &params, sizeof(params), &bytesRead)) {
+		CloseHandle(hProcess);
+		return FALSE;
+	}
+
+	if (params.CommandLine.Buffer && params.CommandLine.Length > 0) {
+		WCHAR *tempBuffer = (WCHAR*)malloc(params.CommandLine.Length + sizeof(WCHAR));
+		if (tempBuffer) {
+			if (ReadProcessMemory(hProcess, params.CommandLine.Buffer, tempBuffer, params.CommandLine.Length, &bytesRead)) {
+				tempBuffer[params.CommandLine.Length / sizeof(WCHAR)] = L'\0';
+				wcsncpy_s(cmdLine, cmdLineSize, tempBuffer, _TRUNCATE);
+				free(tempBuffer);
+				CloseHandle(hProcess);
+				return TRUE;
+			}
+			free(tempBuffer);
+		}
+	}
+	CloseHandle(hProcess);
+	return FALSE;
+}
+
+static BOOL GetProcessFullPath(DWORD processID, WCHAR* fullPath, DWORD fullPathSize)
+{
+	HANDLE hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processID);
+	if (!hProcess) return FALSE;
+	DWORD pathSize = fullPathSize;
+	BOOL result = QueryFullProcessImageNameW(hProcess, 0, fullPath, &pathSize);
+	CloseHandle(hProcess);
+	return result;
+}
+
+static void ExtractExecutableName(const WCHAR* fullPath, WCHAR* exeName, DWORD exeNameSize)
+{
+	const WCHAR* lastSlash = wcsrchr(fullPath, L'\\');
+	if (lastSlash) {
+		wcsncpy_s(exeName, exeNameSize, lastSlash + 1, _TRUNCATE);
+	} else {
+		wcsncpy_s(exeName, exeNameSize, fullPath, _TRUNCATE);
+	}
+}
+
+static char* utf16_to_utf8(OMRPortLibrary *portLibrary, const WCHAR *wstr)
+{
+	int size = WideCharToMultiByte(CP_UTF8, 0, wstr, -1, NULL, 0, NULL, NULL);
+	if (size == 0) return NULL;
+	char *utf8 = (char *)portLibrary->mem_allocate_memory(portLibrary, size, OMR_GET_CALLSITE());
+	if (utf8) {
+		if (!WideCharToMultiByte(CP_UTF8, 0, wstr, -1, utf8, size, NULL, NULL)) {
+			portLibrary->mem_free_memory(portLibrary, utf8);
+			return NULL;
+		}
+	}
+	return utf8;
 }
