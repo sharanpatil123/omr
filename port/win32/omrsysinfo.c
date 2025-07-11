@@ -2095,13 +2095,13 @@ omrsysinfo_get_processes(struct OMRPortLibrary *portLibrary, OMRProcessInfoCallb
 
 	hProcessSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
 	if (hProcessSnap == INVALID_HANDLE_VALUE) {
-		return OMRPORT_ERROR_INTERNAL;
+		return (uintptr_t)-1;
 	}
 
 	pe32.dwSize = sizeof(PROCESSENTRY32W);
 	if (!Process32FirstW(hProcessSnap, &pe32)) {
 		CloseHandle(hProcessSnap);
-		return OMRPORT_ERROR_INTERNAL;
+		return (uintptr_t)-1;
 	}
 
 	do {
@@ -2193,7 +2193,7 @@ static char* utf16_to_utf8(OMRPortLibrary *portLibrary, const WCHAR *wstr)
 {
 	int size = WideCharToMultiByte(CP_UTF8, 0, wstr, -1, NULL, 0, NULL, NULL);
 	if (size == 0) return NULL;
-	char *utf8 = (char *)portLibrary->mem_allocate_memory(portLibrary, size, OMR_GET_CALLSITE());
+	char *utf8 = (char *)portLibrary->mem_allocate_memory(portLibrary, size, OMR_GET_CALLSITE(), OMRMEM_CATEGORY_PORT_LIBRARY);
 	if (utf8) {
 		if (!WideCharToMultiByte(CP_UTF8, 0, wstr, -1, utf8, size, NULL, NULL)) {
 			portLibrary->mem_free_memory(portLibrary, utf8);
