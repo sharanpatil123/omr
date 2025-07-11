@@ -29,6 +29,9 @@
 #include <pdhmsg.h>
 #include <stdio.h>
 #include <windows.h>
+#include <tlhelp32.h>
+#include <psapi.h>
+#include <string.h>
 #include <WinSDKVer.h>
 /* Undefine the winsockapi because winsock2 defines it.  Removes warnings. */
 #if defined(_WINSOCKAPI_) && !defined(_WINSOCK2API_)
@@ -2065,6 +2068,30 @@ omrsysinfo_get_number_context_switches(struct OMRPortLibrary *portLibrary, uint6
 	return OMRPORT_ERROR_SYSINFO_NOT_SUPPORTED;
 }
 
+static const char *get_process_name_fallback(DWORD pid, char *nameBuf, size_t nameBufSize) {
+	HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+	if (hSnap == INVALID_HANDLE_VALUE) {
+		strncpy(nameBuf, "<unknown>", nameBufSize);
+		return nameBuf;
+	}
+
+	PROCESSENTRY32 pe;
+	pe.dwSize = sizeof(PROCESSENTRY32);
+	strncpy(nameBuf, "<unknown>", nameBufSize);
+
+	if (Process32First(hSnap, &pe)) {
+		do {
+			if (pe.th32ProcessID == pid) {
+				strncpy(nameBuf, pe.szExeFile, nameBufSize - 1);
+				nameBuf[nameBufSize - 1] = '\0';
+				break;
+			}
+		} while (Process32Next(hSnap, &pe));
+	}
+
+	CloseHandle(hSnap);
+	return nameBuf;
+}
 /**
  * Get the process ID and commandline for each process.
  * @param[in] portLibrary The port library.
@@ -2075,5 +2102,94 @@ omrsysinfo_get_number_context_switches(struct OMRPortLibrary *portLibrary, uint6
 uintptr_t
 omrsysinfo_get_processes(struct OMRPortLibrary *portLibrary, OMRProcessInfoCallback callback, void *userData)
 {
-	return OMRPORT_ERROR_NOT_SUPPORTED_ON_THIS_PLATFORM;
+	DWORD *processes = NULL;
+	DWORD needed = 0;
+	uintptr_t result = 0;
+	uint32_t numProcesses = 0;
+	uint32_t i = 0;
+
+	if ((0 == EnumProcesses(NULL, 0, &needed)) || (0 == needed)) {
+		portLibrary->error_set_last_error_with_message(
+			portLibrary,
+			OMRPORT_ERROR_OPFAILED,
+			"Failed to get process size using EnumProcesses.");
+		return (uintptr_t)(intptr_t)OMRPORT_ERROR_OPFAILED;
+	}
+
+	processes = (DWORD *)portLibrary->mem_allocate_memory(
+		portLibrary,
+		needed,
+		OMR_GET_CALLSITE(),
+		OMRMEM_CATEGORY_PORT_LIBRARY);
+	if (NULL == processes) {
+		int32_t portableError = portLibrary->error_last_error_number(portLibrary);
+		portLibrary->error_set_last_error_with_message(
+			portLibrary,
+			portableError,
+			"Memory allocation failed for process list.");
+		return (uintptr_t)(intptr_t)portableError;
+	}
+
+	if (0 == EnumProcesses(processes, needed, &needed)) {
+		portLibrary->error_set_last_error_with_message(
+			portLibrary,
+			OMRPORT_ERROR_OPFAILED,
+			"Failed to enumerate processes.");
+		result = (uintptr_t)(intptr_t)OMRPORT_ERROR_OPFAILED;
+		goto done;
+	}
+
+	numProcesses = needed / sizeof(DWORD);
+	for (i = 0; i < numProcesses; i++) {
+		DWORD pid = processes[i];
+		char *imagePath = NULL;
+		HANDLE hProcess = NULL;
+		DWORD size = MAX_PATH;
+
+		imagePath = (char *)portLibrary->mem_allocate_memory(
+			portLibrary,
+			MAX_PATH,
+			OMR_GET_CALLSITE(),
+			OMRMEM_CATEGORY_PORT_LIBRARY);
+		if (NULL == imagePath) {
+			result = (uintptr_t)(intptr_t)portLibrary->error_last_error_number(portLibrary);
+			portLibrary->error_set_last_error_with_message(
+				portLibrary,
+				result,
+				"Memory allocation failed for imagePath.");
+			goto done;
+		}
+
+		strcpy(imagePath, "<unknown>");
+		hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_QUERY_INFORMATION, FALSE, pid);
+		if (NULL != hProcess) {
+			if (!QueryFullProcessImageNameA(hProcess, 0, imagePath, &size)) {
+				portLibrary->error_set_last_error_with_message(
+					portLibrary,
+					-2,
+					"Failed to get process image path, falling back.");
+				get_process_name_fallback(pid, imagePath, MAX_PATH);
+			}
+			CloseHandle(hProcess);
+		} else {
+			portLibrary->error_set_last_error_with_message(
+				portLibrary,
+				-3,
+				"Failed to open process. Falling back.");
+			get_process_name_fallback(pid, imagePath, MAX_PATH);
+		}
+
+		result = callback((uintptr_t)pid, imagePath, userData);
+		portLibrary->mem_free_memory(portLibrary, imagePath);
+		if (0 != result) {
+			goto done;
+		}
+	}
+
+done:
+	if (processes) {
+		portLibrary->mem_free_memory(portLibrary, processes);
+	}
+	return result;
+}
 }
