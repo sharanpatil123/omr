@@ -2155,7 +2155,7 @@ omrsysinfo_get_processes(struct OMRPortLibrary *portLibrary, OMRProcessInfoCallb
 			result = (uintptr_t)(intptr_t)portLibrary->error_last_error_number(portLibrary);
 			portLibrary->error_set_last_error_with_message(
 				portLibrary,
-				result,
+				OMRPORT_ERROR_OPFAILED,
 				"Memory allocation failed for imagePath.");
 			goto done;
 		}
@@ -2191,5 +2191,4 @@ done:
 		portLibrary->mem_free_memory(portLibrary, processes);
 	}
 	return result;
-}
 }
