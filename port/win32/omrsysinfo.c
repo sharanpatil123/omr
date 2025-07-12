@@ -29,6 +29,10 @@
 #include <pdhmsg.h>
 #include <stdio.h>
 #include <windows.h>
+#include <tlhelp32.h>
+#include <psapi.h>
+#include <stdint.h>
+#include <string.h>
 #include <WinSDKVer.h>
 /* Undefine the winsockapi because winsock2 defines it.  Removes warnings. */
 #if defined(_WINSOCKAPI_) && !defined(_WINSOCK2API_)
@@ -49,6 +53,9 @@
 #define OMRPORT_SYSINFO_WINDOWS_TICK 10000000ULL
 #define OMRPORT_SYSINFO_SEC_TO_UNIX_EPOCH 11644473600ULL
 #define OMRPORT_SYSINFO_NS100_PER_SEC 10000000ULL
+
+#define LOG(fmt, ...) printf("[DEBUG] " fmt "\n", ##__VA_ARGS__)
+#define LOG_ERROR(fmt, ...) fprintf(stderr, "[ERROR] " fmt "\n", ##__VA_ARGS__)
 
 static int32_t copyEnvToBuffer(struct OMRPortLibrary *portLibrary, void *args);
 
@@ -2065,6 +2072,39 @@ omrsysinfo_get_number_context_switches(struct OMRPortLibrary *portLibrary, uint6
 	return OMRPORT_ERROR_SYSINFO_NOT_SUPPORTED;
 }
 
+static const char *get_process_name_fallback(DWORD pid, char *nameBuf, size_t nameBufSize) {
+    LOG("Entering fallback for PID %lu", pid);
+
+    HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (hSnap == INVALID_HANDLE_VALUE) {
+        DWORD err = GetLastError();
+        LOG_ERROR("CreateToolhelp32Snapshot failed for PID %lu. Error: %lu", pid, err);
+        strncpy(nameBuf, "<unknown>", nameBufSize);
+        return nameBuf;
+    }
+
+    PROCESSENTRY32 pe;
+    pe.dwSize = sizeof(PROCESSENTRY32);
+    strncpy(nameBuf, "<unknown>", nameBufSize);
+
+    if (Process32First(hSnap, &pe)) {
+        do {
+            if (pe.th32ProcessID == pid) {
+                strncpy(nameBuf, pe.szExeFile, nameBufSize - 1);
+                nameBuf[nameBufSize - 1] = '\0';
+                LOG("Fallback: Found executable name for PID %lu: %s", pid, nameBuf);
+                break;
+            }
+        } while (Process32Next(hSnap, &pe));
+    } else {
+        DWORD err = GetLastError();
+        LOG_ERROR("Process32First failed in fallback for PID %lu. Error: %lu", pid, err);
+    }
+
+    CloseHandle(hSnap);
+    return nameBuf;
+}
+
 /**
  * Get the process ID and commandline for each process.
  * @param[in] portLibrary The port library.
@@ -2075,5 +2115,119 @@ omrsysinfo_get_number_context_switches(struct OMRPortLibrary *portLibrary, uint6
 uintptr_t
 omrsysinfo_get_processes(struct OMRPortLibrary *portLibrary, OMRProcessInfoCallback callback, void *userData)
 {
-	return OMRPORT_ERROR_NOT_SUPPORTED_ON_THIS_PLATFORM;
+	//return OMRPORT_ERROR_NOT_SUPPORTED_ON_THIS_PLATFORM;
+	DWORD *processes = NULL;
+    DWORD needed = 0;
+    uintptr_t result = 0;
+    uint32_t numProcesses = 0;
+    uint32_t i = 0;
+
+    LOG("Calling EnumProcesses to get process count");
+
+    if ((0 == EnumProcesses(NULL, 0, &needed)) || (0 == needed)) {
+        DWORD err = GetLastError();
+        LOG_ERROR("EnumProcesses (size query) failed. Error: %lu", err);
+        portLibrary->error_set_last_error_with_message(
+            portLibrary,
+            OMRPORT_ERROR_OPFAILED,
+            "Failed to get process size using EnumProcesses.");
+        return (uintptr_t)(intptr_t)OMRPORT_ERROR_OPFAILED;
+    }
+
+    LOG("Allocating %lu bytes for process list", (unsigned long)needed);
+
+    processes = (DWORD *)portLibrary->mem_allocate_memory(
+        portLibrary,
+        needed,
+        OMR_GET_CALLSITE(),
+        OMRMEM_CATEGORY_PORT_LIBRARY);
+    if (NULL == processes) {
+        int32_t portableError = portLibrary->error_last_error_number(portLibrary);
+        LOG_ERROR("Memory allocation failed for process list (%lu bytes)", (unsigned long)needed);
+        portLibrary->error_set_last_error_with_message(
+            portLibrary,
+            portableError,
+            "Memory allocation failed for process list.");
+        return (uintptr_t)(intptr_t)portableError;
+    }
+
+    if (0 == EnumProcesses(processes, needed, &needed)) {
+        DWORD err = GetLastError();
+        LOG_ERROR("EnumProcesses (second call) failed. Error: %lu", err);
+        portLibrary->error_set_last_error_with_message(
+            portLibrary,
+            OMRPORT_ERROR_OPFAILED,
+            "Failed to enumerate processes.");
+        result = (uintptr_t)(intptr_t)OMRPORT_ERROR_OPFAILED;
+        goto done;
+    }
+
+    numProcesses = needed / sizeof(DWORD);
+    LOG("Enumerated %u processes", numProcesses);
+
+    for (i = 0; i < numProcesses; i++) {
+        DWORD pid = processes[i];
+        char *imagePath = NULL;
+        HANDLE hProcess = NULL;
+        DWORD size = MAX_PATH;
+
+        LOG("Processing PID: %lu", pid);
+
+        imagePath = (char *)portLibrary->mem_allocate_memory(
+            portLibrary,
+            MAX_PATH,
+            OMR_GET_CALLSITE(),
+            OMRMEM_CATEGORY_PORT_LIBRARY);
+        if (NULL == imagePath) {
+            int32_t err = portLibrary->error_last_error_number(portLibrary);
+            LOG_ERROR("Memory allocation failed for imagePath (PID: %lu, %d bytes)", pid, MAX_PATH);
+            portLibrary->error_set_last_error_with_message(
+                portLibrary,
+                err,
+                "Memory allocation failed for imagePath.");
+            result = (uintptr_t)(intptr_t)err;
+            goto done;
+        }
+
+        strcpy(imagePath, "<unknown>");
+
+        hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_QUERY_INFORMATION, FALSE, pid);
+        if (NULL != hProcess) {
+            if (!QueryFullProcessImageNameA(hProcess, 0, imagePath, &size)) {
+                DWORD err = GetLastError();
+                LOG_ERROR("QueryFullProcessImageNameA failed for PID %lu. Error: %lu", pid, err);
+                portLibrary->error_set_last_error_with_message(
+                    portLibrary,
+                    -2,
+                    "Failed to get process image path, falling back.");
+                get_process_name_fallback(pid, imagePath, MAX_PATH);
+            }
+            CloseHandle(hProcess);
+        } else {
+            DWORD err = GetLastError();
+            LOG_ERROR("OpenProcess failed for PID %lu. Error: %lu", pid, err);
+            portLibrary->error_set_last_error_with_message(
+                portLibrary,
+                -3,
+                "Failed to open process. Falling back.");
+            get_process_name_fallback(pid, imagePath, MAX_PATH);
+        }
+
+        LOG("Callback -> PID: %lu | EXE: %s", pid, imagePath);
+
+        result = callback((uintptr_t)pid, imagePath, userData);
+        portLibrary->mem_free_memory(portLibrary, imagePath);
+
+        if (0 != result) {
+            LOG("Callback returned non-zero (%llu), stopping", (unsigned long long)result);
+            goto done;
+        }
+    }
+
+done:
+    if (processes) {
+        portLibrary->mem_free_memory(portLibrary, processes);
+    }
+    LOG("Finished process enumeration");
+    return result;
 }
