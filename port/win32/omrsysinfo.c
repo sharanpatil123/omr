@@ -31,8 +31,6 @@
 #include <windows.h>
 #include <tlhelp32.h>
 #include <psapi.h>
-#include <stdint.h>
-#include <string.h>
 #include <WinSDKVer.h>
 /* Undefine the winsockapi because winsock2 defines it.  Removes warnings. */
 #if defined(_WINSOCKAPI_) && !defined(_WINSOCK2API_)
@@ -2081,12 +2079,12 @@ static const char *getProcessNameFallback(DWORD pid, char *buffer, size_t buffer
     if (hSnap == INVALID_HANDLE_VALUE) {
         DWORD err = GetLastError();
         LOG_ERROR("CreateToolhelp32Snapshot failed for fallback. PID: %lu, Error: %lu", pid, err);
-        strncpy(buffer, "<unknown>", bufferSize);
+        // strncpy(buffer, "<unknown>", bufferSize);
         return buffer;
     }
 
     pe.dwSize = sizeof(PROCESSENTRY32);
-    strncpy(buffer, "<unknown>", bufferSize);
+    // strncpy(buffer, "<unknown>", bufferSize);
 
     if (Process32First(hSnap, &pe)) {
         do {
@@ -2117,12 +2115,12 @@ static const char *getProcessNameFallback(DWORD pid, char *buffer, size_t buffer
 uintptr_t
 omrsysinfo_get_processes(struct OMRPortLibrary *portLibrary, OMRProcessInfoCallback callback, void *userData)
 {
-	char exePath[MAX_PATH] = "<unknown>";
-    DWORD *processes = NULL;
+	char exePath[MAX_PATH] = {0};
+	DWORD *processes = NULL;
 	DWORD *newBuffer = NULL;
-    DWORD bytesReturned = 0;
-    DWORD numProcesses = 0;
-    DWORD bufferSize = 1024;
+	DWORD bytesReturned = 0;
+	DWORD numProcesses = 0;
+	DWORD bufferSize = 1024;
 	DWORD i = 0;
 	DWORD pid = 0;
 	DWORD pathLen = MAX_PATH;
@@ -2204,6 +2202,10 @@ omrsysinfo_get_processes(struct OMRPortLibrary *portLibrary, OMRProcessInfoCallb
         }
 
         LOG("Callback -> PID: %lu | Executable: %s", pid, exePath);
+		if (exePath[0] == '\0') {
+			LOG("Skipping PID: %lu because exePath is still empty", pid);
+			continue;
+		}
 
         callbackResult = callback((uintptr_t)pid, exePath, userData);
         if (0 != callbackResult) {
