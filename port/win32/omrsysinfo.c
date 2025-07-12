@@ -2137,7 +2137,7 @@ omrsysinfo_get_processes(struct OMRPortLibrary *portLibrary, OMRProcessInfoCallb
         if (!EnumProcesses(processes, bufferSize * sizeof(DWORD), &bytesReturned)) {
             DWORD err = GetLastError();
             LOG_ERROR("EnumProcesses failed. Error: %lu", err);
-            Trc_PRT_failed_to_call_EnumProcesses(OMRPORT_ERROR_SYSINFO_OPFAILED);
+            //Trc_PRT_failed_to_call_EnumProcesses(OMRPORT_ERROR_SYSINFO_OPFAILED);
             portLibrary->mem_free_memory(portLibrary, processes);
             return OMRPORT_ERROR_SYSINFO_OPFAILED;
         }
