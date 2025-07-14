@@ -2107,7 +2107,6 @@ omrsysinfo_get_processes(struct OMRPortLibrary *portLibrary, OMRProcessInfoCallb
 	DWORD numProcesses = 0;
 	DWORD bufferSize = 1024;
 	DWORD i = 0;
-	//DWORD pathLen = MAX_PATH;
 	HANDLE hProcess = NULL;
 	uintptr_t callbackResult = 0;
 	if (NULL == callback) {
@@ -2126,6 +2125,7 @@ omrsysinfo_get_processes(struct OMRPortLibrary *portLibrary, OMRProcessInfoCallb
 		goto alloc_failed;
 	}
 	for (;;) {
+		DWORD *newBuffer = NULL;
 		if (0 == EnumProcesses(processes, bufferSize * sizeof(DWORD), &bytesReturned)) {
 			Trc_PRT_failed_to_call_EnumProcesses(OMRPORT_ERROR_SYSINFO_OPFAILED);
 			callbackResult = (uintptr_t)(intptr_t)OMRPORT_ERROR_SYSINFO_OPFAILED;
