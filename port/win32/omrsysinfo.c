@@ -2105,9 +2105,8 @@ omrsysinfo_get_processes(struct OMRPortLibrary *portLibrary, OMRProcessInfoCallb
 	DWORD *processes = NULL;
 	DWORD bytesReturned = 0;
 	DWORD numProcesses = 0;
-	DWORD bufferSize = 1024;
+	DWORD bufferSize = 1024 * sizeof(DWORD);
 	DWORD i = 0;
-	HANDLE hProcess = NULL;
 	uintptr_t callbackResult = 0;
 	if (NULL == callback) {
 		portLibrary->error_set_last_error_with_message(
@@ -2117,32 +2116,32 @@ omrsysinfo_get_processes(struct OMRPortLibrary *portLibrary, OMRProcessInfoCallb
 				return (uintptr_t)(intptr_t)OMRPORT_ERROR_OPFAILED;
 	}
 	processes = (DWORD *)portLibrary->mem_allocate_memory(
-				portLibrary,
-				bufferSize * sizeof(DWORD),
-				OMR_GET_CALLSITE(),
-				OMRMEM_CATEGORY_PORT_LIBRARY);
+			portLibrary,
+			bufferSize,
+			OMR_GET_CALLSITE(),
+			OMRMEM_CATEGORY_PORT_LIBRARY);
 	if (NULL == processes) {
 		goto alloc_failed;
 	}
 	for (;;) {
 		DWORD *newBuffer = NULL;
-		if (0 == EnumProcesses(processes, bufferSize * sizeof(DWORD), &bytesReturned)) {
+		if (0 == EnumProcesses(processes, bufferSize, &bytesReturned)) {
 			Trc_PRT_failed_to_call_EnumProcesses(OMRPORT_ERROR_SYSINFO_OPFAILED);
 			callbackResult = (uintptr_t)(intptr_t)OMRPORT_ERROR_SYSINFO_OPFAILED;
 			goto done;
 		}
 		/* Break if the buffer is large enough; otherwise, grow the buffer. */
-		if (bytesReturned < bufferSize * sizeof(DWORD)) {
+		if (bytesReturned < bufferSize) {
 			break;
 		}
 		/* Buffer may be too small, increase and retry. */
 		bufferSize *= 2;
 		newBuffer = (DWORD *)portLibrary->mem_reallocate_memory(
-					portLibrary,
-					processes,
-					bufferSize * sizeof(DWORD),
-					OMR_GET_CALLSITE(),
-					OMRMEM_CATEGORY_PORT_LIBRARY);
+				portLibrary,
+				processes,
+				bufferSize,
+				OMR_GET_CALLSITE(),
+				OMRMEM_CATEGORY_PORT_LIBRARY);
 		if (NULL == newBuffer) {
 			goto alloc_failed;
 		}
@@ -2150,20 +2149,22 @@ omrsysinfo_get_processes(struct OMRPortLibrary *portLibrary, OMRProcessInfoCallb
 	}
 	numProcesses = bytesReturned / sizeof(DWORD);
 	for (i = 0; i < numProcesses; i++) {
-		char exePath[MAX_PATH] = {0};
-		DWORD pathLen = MAX_PATH;
+		char exePath[MAX_PATH];
+		DWORD pathLen = sizeof(exePath);
 		DWORD pid = processes[i];
+		HANDLE hProcess = NULL;
 		hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_QUERY_INFORMATION, FALSE, pid);
+		exePath[0] = '\0';
 		if (NULL != hProcess) {
 			if (0 == QueryFullProcessImageNameA(hProcess, 0, exePath, &pathLen)) {
-				getProcessNameFallback(pid, exePath, MAX_PATH);
+				getProcessNameFallback(pid, exePath, sizeof(exePath));
 			}
 			CloseHandle(hProcess);
 		} else {
-			getProcessNameFallback(pid, exePath, MAX_PATH);
+			getProcessNameFallback(pid, exePath, sizeof(exePath));
 		}
 		/* Skip entries with no name. */
-		if (exePath[0] == '\0') {
+		if ('\0' == exePath[0]) {
 			continue;
 		}
 		callbackResult = callback((uintptr_t)pid, exePath, userData);
