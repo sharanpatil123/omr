@@ -2156,7 +2156,7 @@ omrsysinfo_get_processes(struct OMRPortLibrary *portLibrary, OMRProcessInfoCallb
 		hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_QUERY_INFORMATION, FALSE, pid);
 		exePath[0] = '\0';
 		if (NULL != hProcess) {
-			if (0 == QueryFullProcessImageNameA(hProcess, 0, exePath, &pathLen)) {
+			if (0 == QueryFullProcessImageName(hProcess, 0, exePath, &pathLen)) {
 				getProcessNameFallback(pid, exePath, sizeof(exePath));
 			}
 			CloseHandle(hProcess);
