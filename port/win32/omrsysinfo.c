@@ -2069,16 +2069,17 @@ omrsysinfo_get_number_context_switches(struct OMRPortLibrary *portLibrary, uint6
 
 
 /*
- * Fallback: Use Toolhelp32Snapshot to retrieve process name for restricted/system processes.
+ * Fallback: Use CreateToolhelp32Snapshot to retrieve process name for restricted/system processes.
  */
-static const char *
+void
 getProcessNameFallback(DWORD pid, char *buffer, size_t bufferSize)
 {
 	HANDLE hSnap = NULL;
 	PROCESSENTRY32 pe;
-	pe.dwSize = sizeof(PROCESSENTRY32);
+	memset(&pe, 0, sizeof(pe));
+	pe.dwSize = sizeof(pe);
 	hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-	if (hSnap != INVALID_HANDLE_VALUE) {
+	if (INVALID_HANDLE_VALUE != hSnap) {
 		if (Process32First(hSnap, &pe)) {
 			do {
 				if (pe.th32ProcessID == pid) {
@@ -2090,7 +2091,6 @@ getProcessNameFallback(DWORD pid, char *buffer, size_t bufferSize)
 		}
 		CloseHandle(hSnap);
 	}
-	return buffer;
 }
 
 /**
@@ -2114,7 +2114,7 @@ omrsysinfo_get_processes(struct OMRPortLibrary *portLibrary, OMRProcessInfoCallb
 				portLibrary,
 				OMRPORT_ERROR_OPFAILED,
 				"Callback function is NULL.");
-				return (uintptr_t)(intptr_t)OMRPORT_ERROR_OPFAILED;
+		return (uintptr_t)(intptr_t)OMRPORT_ERROR_OPFAILED;
 	}
 	processes = (DWORD *)portLibrary->mem_allocate_memory(
 			portLibrary,
@@ -2153,8 +2153,7 @@ omrsysinfo_get_processes(struct OMRPortLibrary *portLibrary, OMRProcessInfoCallb
 		char exePath[MAX_PATH];
 		DWORD pathLen = sizeof(exePath);
 		DWORD pid = processes[i];
-		HANDLE hProcess = NULL;
-		hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_QUERY_INFORMATION, FALSE, pid);
+		HANDLE hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_QUERY_INFORMATION, FALSE, pid);
 		exePath[0] = '\0';
 		if (NULL != hProcess) {
 			if (0 == QueryFullProcessImageName(hProcess, 0, exePath, &pathLen)) {
