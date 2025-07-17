@@ -2067,32 +2067,6 @@ omrsysinfo_get_number_context_switches(struct OMRPortLibrary *portLibrary, uint6
 	return OMRPORT_ERROR_SYSINFO_NOT_SUPPORTED;
 }
 
-
-/*
- * Fallback: Use CreateToolhelp32Snapshot to retrieve process name for restricted/system processes.
- */
-void
-getProcessNameFallback(DWORD pid, char *buffer, size_t bufferSize)
-{
-	HANDLE hSnap = NULL;
-	PROCESSENTRY32 pe;
-	memset(&pe, 0, sizeof(pe));
-	pe.dwSize = sizeof(pe);
-	hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-	if (INVALID_HANDLE_VALUE != hSnap) {
-		if (Process32First(hSnap, &pe)) {
-			do {
-				if (pe.th32ProcessID == pid) {
-					strncpy(buffer, pe.szExeFile, bufferSize - 1);
-					buffer[bufferSize - 1] = '\0';
-					break;
-				}
-			} while (Process32Next(hSnap, &pe));
-		}
-		CloseHandle(hSnap);
-	}
-}
-
 /**
  * Get the process ID and commandline for each process.
  * @param[in] portLibrary The port library.
@@ -2157,11 +2131,10 @@ omrsysinfo_get_processes(struct OMRPortLibrary *portLibrary, OMRProcessInfoCallb
 		exePath[0] = '\0';
 		if (NULL != hProcess) {
 			if (0 == QueryFullProcessImageName(hProcess, 0, exePath, &pathLen)) {
-				getProcessNameFallback(pid, exePath, sizeof(exePath));
+				CloseHandle(hProcess);
+				continue;
 			}
 			CloseHandle(hProcess);
-		} else {
-			getProcessNameFallback(pid, exePath, sizeof(exePath));
 		}
 		/* Skip entries with no name. */
 		if ('\0' == exePath[0]) {
