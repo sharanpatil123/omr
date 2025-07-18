@@ -2067,31 +2067,6 @@ omrsysinfo_get_number_context_switches(struct OMRPortLibrary *portLibrary, uint6
 	return OMRPORT_ERROR_SYSINFO_NOT_SUPPORTED;
 }
 
-/*
- * Fallback: Use Toolhelp32Snapshot to retrieve process name for restricted/system processes.
- */
-static const char *
-getProcessNameFallback(DWORD pid, char *buffer, size_t bufferSize)
-{
-	HANDLE hSnap = NULL;
-	PROCESSENTRY32 pe;
-	pe.dwSize = sizeof(PROCESSENTRY32);
-	hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-	if (hSnap != INVALID_HANDLE_VALUE) {
-		if (Process32First(hSnap, &pe)) {
-			do {
-				if (pe.th32ProcessID == pid) {
-					strncpy(buffer, pe.szExeFile, bufferSize - 1);
-					buffer[bufferSize - 1] = '\0';
-					break;
-				}
-			} while (Process32Next(hSnap, &pe));
-		}
-		CloseHandle(hSnap);
-	}
-	return buffer;
-}
-
 /**
  * Get the process ID and commandline for each process.
  * @param[in] portLibrary The port library.
@@ -2113,7 +2088,7 @@ omrsysinfo_get_processes(struct OMRPortLibrary *portLibrary, OMRProcessInfoCallb
 				portLibrary,
 				OMRPORT_ERROR_OPFAILED,
 				"Callback function is NULL.");
-				return (uintptr_t)(intptr_t)OMRPORT_ERROR_OPFAILED;
+		return (uintptr_t)(intptr_t)OMRPORT_ERROR_OPFAILED;
 	}
 	processes = (DWORD *)portLibrary->mem_allocate_memory(
 			portLibrary,
@@ -2152,16 +2127,14 @@ omrsysinfo_get_processes(struct OMRPortLibrary *portLibrary, OMRProcessInfoCallb
 		char exePath[MAX_PATH];
 		DWORD pathLen = sizeof(exePath);
 		DWORD pid = processes[i];
-		HANDLE hProcess = NULL;
-		hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_QUERY_INFORMATION, FALSE, pid);
+		HANDLE hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_QUERY_INFORMATION, FALSE, pid);
 		exePath[0] = '\0';
 		if (NULL != hProcess) {
 			if (0 == QueryFullProcessImageName(hProcess, 0, exePath, &pathLen)) {
-				getProcessNameFallback(pid, exePath, sizeof(exePath));
+				CloseHandle(hProcess);
+				continue;
 			}
 			CloseHandle(hProcess);
-		} else {
-			getProcessNameFallback(pid, exePath, sizeof(exePath));
 		}
 		/* Skip entries with no name. */
 		if ('\0' == exePath[0]) {
