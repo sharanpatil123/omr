@@ -2127,17 +2127,17 @@ omrsysinfo_get_processes(struct OMRPortLibrary *portLibrary, OMRProcessInfoCallb
 		char exePath[MAX_PATH];
 		DWORD pathLen = sizeof(exePath);
 		DWORD pid = processes[i];
-		HANDLE hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_QUERY_INFORMATION, FALSE, pid);
+		HANDLE hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
 		exePath[0] = '\0';
-		if (NULL != hProcess) {
-			if (0 == QueryFullProcessImageName(hProcess, 0, exePath, &pathLen)) {
-				CloseHandle(hProcess);
-				continue;
-			}
-			CloseHandle(hProcess);
+		if (NULL == hProcess) {
+			continue;
 		}
+		if (!QueryFullProcessImageName(hProcess, 0, exePath, &pathLen)) {
+			pathLen = 0;
+		}
+		CloseHandle(hProcess);
 		/* Skip entries with no name. */
-		if ('\0' == exePath[0]) {
+		if (0 == pathLen) {
 			continue;
 		}
 		callbackResult = callback((uintptr_t)pid, exePath, userData);
